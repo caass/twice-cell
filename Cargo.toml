@@ -1,0 +1,12 @@
+[package]
+name = "twice-cell"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+serde = ["dep:serde", "either/serde"]
+
+[dependencies]
+either = "1.13.0"
+serde = { version = "1.0.210", optional = true }
+void = "1.0.2"
