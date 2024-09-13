@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2021"
 authors = ["Cass Fridkin <cass@swag.lgbt>"]
 license = "MIT OR Apache-2.0"
+description = "Like `once-cell`, except you set the value twice."
+homepage = "https://github.com/caass/twice-cell"
+repository = "https://github.com/caass/twice-cell.git"
 
 [features]
 serde = ["dep:serde", "either/serde"]
