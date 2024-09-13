@@ -5,6 +5,7 @@ use std::cell::UnsafeCell;
 use std::fmt::{self, Debug, Formatter};
 use std::marker::PhantomData;
 use std::mem::{self, ManuallyDrop};
+use std::panic::{panic_any, AssertUnwindSafe, RefUnwindSafe, UnwindSafe};
 use std::sync::Once;
 
 pub use either::Either;
@@ -595,7 +596,10 @@ impl<A, B> TwiceLock<A, B> {
     ///     assert_eq!(CELL.get(), Some(&92));
     /// }
     /// ```
-    pub fn set(&self, value: B) -> Result<(), B> {
+    pub fn set(&self, value: B) -> Result<(), B>
+    where
+        A: RefUnwindSafe,
+    {
         match self.try_insert(value) {
             Ok(_) => Ok(()),
             Err((_, value)) => Err(value),
@@ -632,10 +636,14 @@ impl<A, B> TwiceLock<A, B> {
     /// }
     /// ```
     #[inline]
-    pub fn try_insert(&self, value: B) -> Result<&B, (&B, B)> {
+    pub fn try_insert(&self, value: B) -> Result<&B, (&B, B)>
+    where
+        A: RefUnwindSafe,
+    {
         let mut value = Some(value);
+        let mut safe_value = AssertUnwindSafe(&mut value);
         // Safety: the value is set to `Some` right above
-        let res = self.get_or_init(|_| unsafe { value.take().unwrap_unchecked() });
+        let res = self.get_or_init(move |_| unsafe { safe_value.take().unwrap_unchecked() });
 
         match value {
             None => Ok(res),
@@ -673,7 +681,8 @@ impl<A, B> TwiceLock<A, B> {
     #[inline]
     pub fn get_or_init<F>(&self, f: F) -> &B
     where
-        F: FnOnce(&A) -> B,
+        F: UnwindSafe + FnOnce(&A) -> B,
+        A: RefUnwindSafe,
     {
         self.get_or_try_init(|a| Ok::<B, Void>(f(a))).void_unwrap()
     }
@@ -708,7 +717,8 @@ impl<A, B> TwiceLock<A, B> {
     #[inline]
     pub fn get_mut_or_init<F>(&mut self, f: F) -> &mut B
     where
-        F: FnOnce(&A) -> B,
+        F: UnwindSafe + FnOnce(&A) -> B,
+        A: RefUnwindSafe,
     {
         self.get_mut_or_try_init(|a| Ok::<B, Void>(f(a)))
             .void_unwrap()
@@ -749,7 +759,9 @@ impl<A, B> TwiceLock<A, B> {
     #[inline]
     pub fn get_or_try_init<F, E>(&self, f: F) -> Result<&B, E>
     where
-        F: FnOnce(&A) -> Result<B, E>,
+        F: UnwindSafe + FnOnce(&A) -> Result<B, E>,
+        E: Send + 'static,
+        A: RefUnwindSafe,
     {
         // Fast path check
         // NOTE: We need to perform an acquire on the state in this method
@@ -800,7 +812,9 @@ impl<A, B> TwiceLock<A, B> {
     #[inline]
     pub fn get_mut_or_try_init<F, E>(&mut self, f: F) -> Result<&mut B, E>
     where
-        F: FnOnce(&A) -> Result<B, E>,
+        F: UnwindSafe + FnOnce(&A) -> Result<B, E>,
+        E: Send + 'static,
+        A: RefUnwindSafe,
     {
         // Safety: we're only using `a` to initialize
         if let Some(a) = unsafe { self.get_either() }.left() {
@@ -858,27 +872,28 @@ impl<A, B> TwiceLock<A, B> {
     fn initialize<F, E>(&self, f: F, a: &A) -> Result<(), E>
     where
         F: FnOnce(&A) -> Result<B, E>,
+        E: Send + 'static,
+        A: RefUnwindSafe,
+        F: UnwindSafe,
     {
-        let mut res: Result<(), E> = Ok(());
         let slot = &self.value;
 
-        // Ignore poisoning from other threads
-        // If another thread panics, then we'll be able to run our closure
-        self.once.call_once_force(|p| {
-            match f(a) {
-                Ok(value) => {
-                    // Safety: we have unique access to the slot because we're inside a `once` closure.
-                    unsafe { (*slot.get()).b = ManuallyDrop::new(value) };
+        // Since we don't have access to `p.poison()`, we have to panic and then catch it explicitly.
+        std::panic::catch_unwind(AssertUnwindSafe(|| {
+            self.once.call_once_force(|_| {
+                match f(a) {
+                    Ok(value) => {
+                        // Safety: we have unique access to the slot because we're inside a `once` closure.
+                        unsafe { (*slot.get()).b = ManuallyDrop::new(value) };
+                    }
+                    Err(e) => panic_any(e),
                 }
-                Err(e) => {
-                    res = Err(e);
-                    // p.poison(); <- not a public method
-                    panic!("poisoning OnceState {p:#?}"); // <- propagates the panic out, which isn't what we want...
-                }
-            }
-        });
-
-        res
+            });
+        }))
+        .map_err(|any| match any.downcast() {
+            Ok(e) => *e,
+            Err(any) => panic_any(any),
+        })
     }
 
     /// # Safety
