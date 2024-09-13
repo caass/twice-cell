@@ -2,6 +2,8 @@
 name = "twice-cell"
 version = "0.1.0"
 edition = "2021"
+authors = ["Cass Fridkin <cass@swag.lgbt>"]
+license = "MIT OR Apache-2.0"
 
 [features]
 serde = ["dep:serde", "either/serde"]
