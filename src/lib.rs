@@ -11,6 +11,28 @@ use std::sync::Once;
 pub use either::Either;
 use void::{ResultVoidExt, Void};
 
+/// A cell which can nominally be modified only once.
+///
+/// The main difference between this struct and a [`OnceCell`] is that rather than operating on an [`Option`],
+/// this type operates on an [`Either`] -- meaning methods such as [`TwiceCell::get_or_init`] take a parameter
+/// that can be used to compute the `B` value of a `TwiceCell` based on its `A` value.
+///
+/// For a thread-safe version of this struct, see [`TwiceLock`].
+///
+/// [`OnceCell`]: std::cell::OnceCell
+///
+/// # Examples
+///
+/// ```
+/// use twice_cell::TwiceCell;
+///
+/// let cell = TwiceCell::new("an initial `A` value for the cell");
+/// assert!(cell.get().is_none());
+///
+/// let value = cell.get_or_init(|s| s.len()); // <- set a `B` value based on the inital `A` value!
+/// assert_eq!(*value, 33);
+/// assert!(cell.get().is_some());
+/// ```
 pub struct TwiceCell<A, B> {
     // Invariant: modified at most once, and in the direction from `A` to `B`.
     inner: UnsafeCell<Either<A, B>>,
@@ -472,6 +494,7 @@ pub struct TwiceLock<A, B> {
     once: Once,
 
     // Whether or not the value is set is tracked by `once.is_completed()`,
+    // Invariant: modified at most once, and in the direction from `A` to `B`.
     value: UnsafeCell<UntaggedEither<A, B>>,
 
     // I don't understand this at all, but it's in stdlib.
