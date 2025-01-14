@@ -5,7 +5,7 @@ use std::cell::UnsafeCell;
 use std::fmt::{self, Debug, Formatter};
 use std::marker::PhantomData;
 use std::mem::{self, ManuallyDrop};
-use std::panic::{panic_any, AssertUnwindSafe, RefUnwindSafe, UnwindSafe};
+use std::panic::{panic_any, resume_unwind, AssertUnwindSafe, RefUnwindSafe, UnwindSafe};
 use std::sync::Once;
 
 pub use either::Either;
@@ -909,7 +909,7 @@ impl<A, B> TwiceLock<A, B> {
                         // Safety: we have unique access to the slot because we're inside a `once` closure.
                         unsafe { (*slot.get()).b = ManuallyDrop::new(value) };
                     }
-                    Err(e) => panic_any(e),
+                    Err(e) => resume_unwind(Box::new(e)),
                 }
             });
         }))
