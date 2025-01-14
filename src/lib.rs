@@ -1,3 +1,4 @@
+#![feature(once_cell_try)]
 #![warn(clippy::pedantic)]
 #![warn(clippy::undocumented_unsafe_blocks)]
 
@@ -5,8 +6,7 @@ use std::cell::UnsafeCell;
 use std::fmt::{self, Debug, Formatter};
 use std::marker::PhantomData;
 use std::mem::{self, ManuallyDrop};
-use std::panic::{panic_any, AssertUnwindSafe, RefUnwindSafe, UnwindSafe};
-use std::sync::Once;
+use std::sync::OnceLock;
 
 pub use either::Either;
 use void::{ResultVoidExt, Void};
@@ -448,7 +448,7 @@ impl<'de, A: serde::Deserialize<'de>, B: serde::Deserialize<'de>> serde::Deseria
 /// [`Either`], but without the tag on the union.
 ///
 /// Requires some outside source of synchronization to figure out which field is currently set.
-/// In [`TwiceLock`], that's [`Once`].
+/// In [`TwiceLock`], that's [`OnceLock`].
 union UntaggedEither<A, B> {
     a: ManuallyDrop<A>,
     b: ManuallyDrop<B>,
@@ -491,9 +491,9 @@ impl<A, B> From<B> for UntaggedEither<A, B> {
 
 pub struct TwiceLock<A, B> {
     /// Synchronization primitive used to enforce whether field `a` or `b` is set in `.value`.
-    once: Once,
+    once: OnceLock<()>,
 
-    // Whether or not the value is set is tracked by `once.is_completed()`,
+    // Whether or not the value is set is tracked by `once.get().is_some()`,
     // Invariant: modified at most once, and in the direction from `A` to `B`.
     value: UnsafeCell<UntaggedEither<A, B>>,
 
@@ -524,7 +524,7 @@ impl<A, B> TwiceLock<A, B> {
     #[must_use]
     pub const fn new(value: A) -> TwiceLock<A, B> {
         TwiceLock {
-            once: Once::new(),
+            once: OnceLock::new(),
             value: UnsafeCell::new(UntaggedEither::new(value)),
             _marker: PhantomData,
         }
@@ -563,7 +563,7 @@ impl<A, B> TwiceLock<A, B> {
     /// is set the reference will be invalidated.
     ///
     /// Unlike `TwiceCell`, in which `A` references can be used for other purposes (e.g. equality checking),
-    /// we can _only_ use `&A` to set `self.value` inside of a `Once` closure. This is because if on
+    /// we can _only_ use `&A` to set `self.value` inside of a `OnceLock` closure. This is because if on
     /// one thread we're using `A` to e.g. check equality, another thread could mutate `self` into `B`,
     /// causing the reference to `A` to be invalidated.
     #[inline]
@@ -619,10 +619,7 @@ impl<A, B> TwiceLock<A, B> {
     ///     assert_eq!(CELL.get(), Some(&92));
     /// }
     /// ```
-    pub fn set(&self, value: B) -> Result<(), B>
-    where
-        A: RefUnwindSafe,
-    {
+    pub fn set(&self, value: B) -> Result<(), B> {
         match self.try_insert(value) {
             Ok(_) => Ok(()),
             Err((_, value)) => Err(value),
@@ -659,14 +656,10 @@ impl<A, B> TwiceLock<A, B> {
     /// }
     /// ```
     #[inline]
-    pub fn try_insert(&self, value: B) -> Result<&B, (&B, B)>
-    where
-        A: RefUnwindSafe,
-    {
+    pub fn try_insert(&self, value: B) -> Result<&B, (&B, B)> {
         let mut value = Some(value);
-        let mut safe_value = AssertUnwindSafe(&mut value);
         // Safety: the value is set to `Some` right above
-        let res = self.get_or_init(move |_| unsafe { safe_value.take().unwrap_unchecked() });
+        let res = self.get_or_init(|_| unsafe { value.take().unwrap_unchecked() });
 
         match value {
             None => Ok(res),
@@ -704,8 +697,7 @@ impl<A, B> TwiceLock<A, B> {
     #[inline]
     pub fn get_or_init<F>(&self, f: F) -> &B
     where
-        F: UnwindSafe + FnOnce(&A) -> B,
-        A: RefUnwindSafe,
+        F: FnOnce(&A) -> B,
     {
         self.get_or_try_init(|a| Ok::<B, Void>(f(a))).void_unwrap()
     }
@@ -740,8 +732,7 @@ impl<A, B> TwiceLock<A, B> {
     #[inline]
     pub fn get_mut_or_init<F>(&mut self, f: F) -> &mut B
     where
-        F: UnwindSafe + FnOnce(&A) -> B,
-        A: RefUnwindSafe,
+        F: FnOnce(&A) -> B,
     {
         self.get_mut_or_try_init(|a| Ok::<B, Void>(f(a)))
             .void_unwrap()
@@ -782,9 +773,7 @@ impl<A, B> TwiceLock<A, B> {
     #[inline]
     pub fn get_or_try_init<F, E>(&self, f: F) -> Result<&B, E>
     where
-        F: UnwindSafe + FnOnce(&A) -> Result<B, E>,
-        E: Send + 'static,
-        A: RefUnwindSafe,
+        F: FnOnce(&A) -> Result<B, E>,
     {
         // Fast path check
         // NOTE: We need to perform an acquire on the state in this method
@@ -835,9 +824,7 @@ impl<A, B> TwiceLock<A, B> {
     #[inline]
     pub fn get_mut_or_try_init<F, E>(&mut self, f: F) -> Result<&mut B, E>
     where
-        F: UnwindSafe + FnOnce(&A) -> Result<B, E>,
-        E: Send + 'static,
-        A: RefUnwindSafe,
+        F: FnOnce(&A) -> Result<B, E>,
     {
         // Safety: we're only using `a` to initialize
         if let Some(a) = unsafe { self.get_either() }.left() {
@@ -874,8 +861,7 @@ impl<A, B> TwiceLock<A, B> {
     pub fn replace(&mut self, value: A) -> Either<A, B> {
         let inner = mem::replace(self.value.get_mut(), UntaggedEither::new(value));
 
-        if self.is_set() {
-            self.once = Once::new();
+        if self.once.take().is_some() {
             // SAFETY: `self.value` is initialized and contains a valid `B`.
             // `self.once` is reset, so `is_initialized()` will be false again
             // which prevents the value from being read twice.
@@ -888,35 +874,24 @@ impl<A, B> TwiceLock<A, B> {
 
     #[inline]
     fn is_set(&self) -> bool {
-        self.once.is_completed()
+        self.once.get().is_some()
     }
 
     #[cold]
     fn initialize<F, E>(&self, f: F, a: &A) -> Result<(), E>
     where
         F: FnOnce(&A) -> Result<B, E>,
-        E: Send + 'static,
-        A: RefUnwindSafe,
-        F: UnwindSafe,
     {
         let slot = &self.value;
 
-        // Since we don't have access to `p.poison()`, we have to panic and then catch it explicitly.
-        std::panic::catch_unwind(AssertUnwindSafe(|| {
-            self.once.call_once_force(|_| {
-                match f(a) {
-                    Ok(value) => {
-                        // Safety: we have unique access to the slot because we're inside a `once` closure.
-                        unsafe { (*slot.get()).b = ManuallyDrop::new(value) };
-                    }
-                    Err(e) => panic_any(e),
-                }
-            });
-        }))
-        .map_err(|any| match any.downcast() {
-            Ok(e) => *e,
-            Err(any) => panic_any(any),
-        })
+        self.once.get_or_try_init(|| -> Result<(), E> {
+            let value = f(a)?;
+            // Safety: we have unique access to the slot because we're inside a `once` closure.
+            unsafe { (*slot.get()).b = ManuallyDrop::new(value) };
+            Ok(())
+        })?;
+
+        Ok(())
     }
 
     /// # Safety
@@ -980,7 +955,7 @@ impl<A, B> Drop for TwiceLock<A, B> {
     }
 }
 
-/// Safety: The `UnsafeCell` exists to enforce borrow checking via the `Once` primitive instead of the compiler;
+/// Safety: The `UnsafeCell` exists to enforce borrow checking via the `OnceLock` primitive instead of the compiler;
 /// that is to say, we can override `UnsafeCell`'s `!Send`-ness if both `A` and `B` are `Send`.
 unsafe impl<A: Send, B: Send> Send for TwiceLock<A, B> {}
 
@@ -1030,8 +1005,8 @@ impl<A, B> From<B> for TwiceLock<A, B> {
     /// ```
     #[inline]
     fn from(value: B) -> Self {
-        let once = Once::new();
-        once.call_once(|| {});
+        let once = OnceLock::new();
+        once.set(()).unwrap();
 
         let value = UnsafeCell::new(UntaggedEither::from(value));
 
