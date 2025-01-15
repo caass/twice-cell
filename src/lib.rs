@@ -54,7 +54,10 @@ impl<A, B> TwiceCell<A, B> {
     #[inline]
     pub fn get(&self) -> Option<&B> {
         // Safety: we're handing out a reference to B
-        unsafe { self.get_either() }.right()
+        match unsafe { self.get_either() } {
+            Either::Left(_a) => None,
+            Either::Right(b) => Some(unsafe { &*b }),
+        }
     }
 
     /// Gets the mutable reference to the underlying value.
@@ -75,10 +78,13 @@ impl<A, B> TwiceCell<A, B> {
     ///
     /// I think.
     #[inline]
-    unsafe fn get_either(&self) -> Either<&A, &B> {
+    unsafe fn get_either(&self) -> Either<*const A, *const B> {
         // Safety: the caller promises to only ever hand
         // out references to B
-        unsafe { &*self.inner.get() }.as_ref()
+        match unsafe { &*self.inner.get() } {
+            Either::Left(a) => Either::Left(a),
+            Either::Right(b) => Either::Right(b),
+        }
     }
 
     /// Gets the mutable reference to either underlying value.
@@ -253,8 +259,8 @@ impl<A, B> TwiceCell<A, B> {
     {
         // Safety: The reference to `A` is only live for the duration of this function.
         match unsafe { self.get_either() } {
-            Either::Left(a) => self.try_init(f, a),
-            Either::Right(b) => Ok(b),
+            Either::Left(a) => unsafe { self.try_init(f, a) },
+            Either::Right(b) => Ok(unsafe { &*b }),
         }
     }
 
@@ -293,7 +299,7 @@ impl<A, B> TwiceCell<A, B> {
     {
         // Safety: The reference to `A` is only live for this function call
         if let Some(a) = unsafe { self.get_either() }.left() {
-            self.try_init(f, a)?;
+            unsafe { self.try_init(f, a) }?;
         }
 
         // Safety: we just set this value
@@ -304,11 +310,11 @@ impl<A, B> TwiceCell<A, B> {
     // Avoid inlining the initialization closure into the common path that fetches
     // the already initialized value
     #[cold]
-    fn try_init<F, E>(&self, f: F, a: &A) -> Result<&B, E>
+    unsafe fn try_init<F, E>(&self, f: F, a: *const A) -> Result<&B, E>
     where
         F: FnOnce(&A) -> Result<B, E>,
     {
-        let val = f(a)?;
+        let val = f(unsafe { &*a })?;
         if let Ok(val) = self.try_insert(val) {
             Ok(val)
         } else {
@@ -382,7 +388,10 @@ impl<A: Clone, B: Clone> Clone for TwiceCell<A, B> {
     #[inline]
     fn clone(&self) -> Self {
         // Safety: The borrow only lives until mapped to `Clone::clone`
-        let inner = unsafe { self.get_either() }.map_either(A::clone, B::clone);
+        let inner = match unsafe { self.get_either() } {
+            Either::Left(a) => Either::Left(A::clone(unsafe { &*a })),
+            Either::Right(b) => Either::Right(B::clone(unsafe { &*b })),
+        };
 
         TwiceCell {
             inner: UnsafeCell::new(inner),
@@ -538,7 +547,7 @@ impl<A, B> TwiceLock<A, B> {
     pub fn get(&self) -> Option<&B> {
         if self.is_set() {
             // Safety: we checked `is_set`.
-            Some(unsafe { self.get_b_unchecked() })
+            Some(unsafe { &*self.get_b_unchecked() })
         } else {
             None
         }
@@ -567,7 +576,7 @@ impl<A, B> TwiceLock<A, B> {
     /// one thread we're using `A` to e.g. check equality, another thread could mutate `self` into `B`,
     /// causing the reference to `A` to be invalidated.
     #[inline]
-    unsafe fn get_either(&self) -> Either<&A, &B> {
+    unsafe fn get_either(&self) -> Either<*const A, *const B> {
         if self.is_set() {
             // Safety: we're initialized, therefore `b` is set.
             Either::Right(unsafe { self.get_b_unchecked() })
@@ -794,13 +803,13 @@ impl<A, B> TwiceLock<A, B> {
         //
         // Safety: the `A` reference is used to initialize `self.value`
         match unsafe { self.get_either() } {
-            Either::Left(a) => self.initialize(f, a)?,
-            Either::Right(b) => return Ok(b),
+            Either::Left(a) => unsafe { self.initialize(f, a) }?,
+            Either::Right(b) => return Ok(unsafe { &*b }),
         };
 
         debug_assert!(self.is_set());
         // SAFETY: The inner value has been initialized
-        Ok(unsafe { self.get_b_unchecked() })
+        Ok(unsafe { &*self.get_b_unchecked() })
     }
 
     /// Gets the mutable reference of the contents of the cell, initializing
@@ -841,7 +850,7 @@ impl<A, B> TwiceLock<A, B> {
     {
         // Safety: we're only using `a` to initialize
         if let Some(a) = unsafe { self.get_either() }.left() {
-            self.initialize(f, a)?;
+            unsafe { self.initialize(f, a) }?;
         }
 
         debug_assert!(self.is_set());
@@ -892,7 +901,7 @@ impl<A, B> TwiceLock<A, B> {
     }
 
     #[cold]
-    fn initialize<F, E>(&self, f: F, a: &A) -> Result<(), E>
+    unsafe fn initialize<F, E>(&self, f: F, a: *const A) -> Result<(), E>
     where
         F: FnOnce(&A) -> Result<B, E>,
         E: Send + 'static,
@@ -904,7 +913,7 @@ impl<A, B> TwiceLock<A, B> {
         // Since we don't have access to `p.poison()`, we have to panic and then catch it explicitly.
         std::panic::catch_unwind(AssertUnwindSafe(|| {
             self.once.call_once_force(|_| {
-                match f(a) {
+                match f(unsafe { &*a }) {
                     Ok(value) => {
                         // Safety: we have unique access to the slot because we're inside a `once` closure.
                         unsafe { (*slot.get()).b = ManuallyDrop::new(value) };
@@ -923,11 +932,11 @@ impl<A, B> TwiceLock<A, B> {
     ///
     /// The value must be unset.
     #[inline]
-    unsafe fn get_a_unchecked(&self) -> &ManuallyDrop<A> {
+    unsafe fn get_a_unchecked(&self) -> *const A {
         debug_assert!(!self.is_set());
 
         // Safety: The caller upholds the contract that the value is unset, and therefore `.a` is set.
-        unsafe { &(*self.value.get()).a }
+        unsafe { &*(*self.value.get()).a }
     }
 
     #[inline]
@@ -942,11 +951,11 @@ impl<A, B> TwiceLock<A, B> {
     ///
     /// The value must be set.
     #[inline]
-    unsafe fn get_b_unchecked(&self) -> &ManuallyDrop<B> {
+    unsafe fn get_b_unchecked(&self) -> *const B {
         debug_assert!(self.is_set());
 
         // Safety: The caller upholds the contract that the value (and therefore `.b`) is set.
-        unsafe { &(*self.value.get()).b }
+        unsafe { &*(*self.value.get()).b }
     }
 
     /// # Safety
