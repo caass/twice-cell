@@ -56,6 +56,7 @@ impl<A, B> TwiceCell<A, B> {
         // Safety: we're handing out a reference to B
         match unsafe { self.get_either() } {
             Either::Left(_a) => None,
+            // Safety: this pointer is safe to dereference because we got it from `self.get_either`.
             Either::Right(b) => Some(unsafe { &*b }),
         }
     }
@@ -259,7 +260,9 @@ impl<A, B> TwiceCell<A, B> {
     {
         // Safety: The reference to `A` is only live for the duration of this function.
         match unsafe { self.get_either() } {
+            // Safety: this `a` came from `self`
             Either::Left(a) => unsafe { self.try_init(f, a) },
+            // Safety: we can always dereference pointers from `self.get_either`
             Either::Right(b) => Ok(unsafe { &*b }),
         }
     }
@@ -299,6 +302,7 @@ impl<A, B> TwiceCell<A, B> {
     {
         // Safety: The reference to `A` is only live for this function call
         if let Some(a) = unsafe { self.get_either() }.left() {
+            // Safety: this `a` came from `self`.
             unsafe { self.try_init(f, a) }?;
         }
 
@@ -309,11 +313,13 @@ impl<A, B> TwiceCell<A, B> {
 
     // Avoid inlining the initialization closure into the common path that fetches
     // the already initialized value
+    /// Safety: `a` must be non-null and point to an `A` contained in `self`.
     #[cold]
     unsafe fn try_init<F, E>(&self, f: F, a: *const A) -> Result<&B, E>
     where
         F: FnOnce(&A) -> Result<B, E>,
     {
+        // Safety: the caller guarantees we can dereference this pointer.
         let val = f(unsafe { &*a })?;
         if let Ok(val) = self.try_insert(val) {
             Ok(val)
@@ -389,7 +395,9 @@ impl<A: Clone, B: Clone> Clone for TwiceCell<A, B> {
     fn clone(&self) -> Self {
         // Safety: The borrow only lives until mapped to `Clone::clone`
         let inner = match unsafe { self.get_either() } {
+            // Safety: This pointer is non-null.
             Either::Left(a) => Either::Left(A::clone(unsafe { &*a })),
+            // Safety: This pointer is non-null.
             Either::Right(b) => Either::Right(B::clone(unsafe { &*b })),
         };
 
@@ -803,7 +811,9 @@ impl<A, B> TwiceLock<A, B> {
         //
         // Safety: the `A` reference is used to initialize `self.value`
         match unsafe { self.get_either() } {
+            // Safety: `a` came from `self`.
             Either::Left(a) => unsafe { self.initialize(f, a) }?,
+            // Safety: This pointer is non-null because it came from `self.get_either()`
             Either::Right(b) => return Ok(unsafe { &*b }),
         };
 
@@ -850,6 +860,7 @@ impl<A, B> TwiceLock<A, B> {
     {
         // Safety: we're only using `a` to initialize
         if let Some(a) = unsafe { self.get_either() }.left() {
+            // Safety: `a` came from `self`.
             unsafe { self.initialize(f, a) }?;
         }
 
@@ -900,6 +911,7 @@ impl<A, B> TwiceLock<A, B> {
         self.once.is_completed()
     }
 
+    /// Safety: `a` must be non-null and point to the value contained in `self`.
     #[cold]
     unsafe fn initialize<F, E>(&self, f: F, a: *const A) -> Result<(), E>
     where
@@ -913,6 +925,7 @@ impl<A, B> TwiceLock<A, B> {
         // Since we don't have access to `p.poison()`, we have to panic and then catch it explicitly.
         std::panic::catch_unwind(AssertUnwindSafe(|| {
             self.once.call_once_force(|_| {
+                // Safety: the caller guarantees this pointer is non-null.
                 match f(unsafe { &*a }) {
                     Ok(value) => {
                         // Safety: we have unique access to the slot because we're inside a `once` closure.
