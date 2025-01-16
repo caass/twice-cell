@@ -13,5 +13,5 @@ serde = ["dep:serde", "either/serde"]
 
 [dependencies]
 either = "1.13.0"
-serde = { version = "1.0.210", optional = true }
+serde = { version = "1.0.217", optional = true }
 void = "1.0.2"
