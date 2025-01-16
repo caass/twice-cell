@@ -17,10 +17,11 @@ jobs:
     strategy:
       matrix:
         toolchain: ["stable", "beta", "nightly"]
-
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@${{ matrix.toolchain }}
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
       - run: cargo test --verbose --all-features
-      - if: ${{ matrix.toolchain }} == "nightly"
+      - if: matrix.toolchain == "nightly"
         run: rustup component add miri && cargo miri test --verbose --all-features
