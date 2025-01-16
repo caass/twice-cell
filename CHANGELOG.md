@@ -11,10 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- *(serde)* fix serde impl for twice-cell
-- fix!(miri): Use raw pointers to pass miri checks
-- *(err)* Bypass panic hook on errors during initialization
-- *(panic)* Bypass panic hook on caught panics during initialization
+- *(serde)* fix serde impl for twice-cell (#10)
+- fix!(miri): Use raw pointers to pass miri checks (#8)
+- *(err)* Bypass panic hook on errors during initialization (#4)
+- *(panic)* Bypass panic hook on caught panics during initialization (#3)
 
 ### Other
 
@@ -22,9 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - *(deps)* update dependencies and fix ci (#15)
 - *(readme)* Update README (#14)
 - *(CI)* Run MIRI, use more toolchains, etc. (#12)
-- *(clippy)* Add safety comments
+- *(clippy)* Add safety comments (#11)
 - Add struct docs to `TwiceCell`
-- release
 
 ## [0.1.0](https://github.com/caass/twice-cell/releases/tag/v0.1.0) - 2024-09-13
 
