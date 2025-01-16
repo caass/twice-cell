@@ -5,7 +5,7 @@ use std::cell::UnsafeCell;
 use std::fmt::{self, Debug, Formatter};
 use std::marker::PhantomData;
 use std::mem::{self, ManuallyDrop};
-use std::panic::{panic_any, resume_unwind, AssertUnwindSafe, RefUnwindSafe, UnwindSafe};
+use std::panic::{resume_unwind, AssertUnwindSafe, RefUnwindSafe, UnwindSafe};
 use std::sync::Once;
 
 pub use either::Either;
@@ -434,7 +434,7 @@ impl<A: serde::Serialize, B: serde::Serialize> serde::Serialize for TwiceCell<A,
         S: serde::Serializer,
     {
         // Safety: The reference only lives for the duration of this function.
-        unsafe { self.get_either() }.serialize(serializer)
+        either::for_both!(unsafe { self.get_either() }, ptr => unsafe { &*ptr }.serialize(serializer))
     }
 }
 
