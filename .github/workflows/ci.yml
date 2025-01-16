@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        toolchain: ["stable", "beta", "nightly"]
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@${{ matrix.toolchain }}
+      - run: cargo test --verbose --all-features
+      - if: ${{ matrix.toolchain }} == "nightly"
+        run: rustup component add miri && cargo miri test --verbose --all-features
