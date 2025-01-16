@@ -5,7 +5,7 @@ use std::cell::UnsafeCell;
 use std::fmt::{self, Debug, Formatter};
 use std::marker::PhantomData;
 use std::mem::{self, ManuallyDrop};
-use std::panic::{panic_any, AssertUnwindSafe, RefUnwindSafe, UnwindSafe};
+use std::panic::{panic_any, resume_unwind, AssertUnwindSafe, RefUnwindSafe, UnwindSafe};
 use std::sync::Once;
 
 pub use either::Either;
@@ -915,7 +915,7 @@ impl<A, B> TwiceLock<A, B> {
         }))
         .map_err(|any| match any.downcast() {
             Ok(e) => *e,
-            Err(any) => panic_any(any),
+            Err(any) => resume_unwind(any),
         })
     }
 
