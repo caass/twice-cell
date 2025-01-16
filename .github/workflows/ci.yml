@@ -12,7 +12,15 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  ci:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - run: cargo clippy --verbose
+  test:
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -23,5 +31,11 @@ jobs:
         with:
           toolchain: ${{ matrix.toolchain }}
       - run: cargo test --verbose --all-features
-      - if: matrix.toolchain == "nightly"
-        run: rustup component add miri && cargo miri test --verbose --all-features
+  miri:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+      - run: cargo miri test --verbose --all-features

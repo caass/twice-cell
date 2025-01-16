@@ -12,6 +12,6 @@ repository = "https://github.com/caass/twice-cell.git"
 serde = ["dep:serde", "either/serde"]
 
 [dependencies]
-either = "1.13.0"
-serde = { version = "1.0.210", optional = true }
-void = "1.0.2"
+either = "1.13"
+serde = { version = "1.0", optional = true }
+void = "1.0"
