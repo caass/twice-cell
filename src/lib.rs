@@ -909,7 +909,7 @@ impl<A, B> TwiceLock<A, B> {
                         // Safety: we have unique access to the slot because we're inside a `once` closure.
                         unsafe { (*slot.get()).b = ManuallyDrop::new(value) };
                     }
-                    Err(e) => panic_any(e),
+                    Err(e) => resume_unwind(Box::new(e)),
                 }
             });
         }))
