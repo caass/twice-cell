@@ -3,7 +3,6 @@
 
 use std::cell::UnsafeCell;
 use std::fmt::{self, Debug, Formatter};
-use std::marker::PhantomData;
 use std::mem::{self, ManuallyDrop};
 use std::panic::{resume_unwind, AssertUnwindSafe, RefUnwindSafe, UnwindSafe};
 use std::sync::Once;
@@ -513,26 +512,6 @@ pub struct TwiceLock<A, B> {
     // Whether or not the value is set is tracked by `once.is_completed()`,
     // Invariant: modified at most once, and in the direction from `A` to `B`.
     value: UnsafeCell<UntaggedEither<A, B>>,
-
-    // I don't understand this at all, but it's in stdlib.
-    /// `PhantomData` to make sure dropck understands we're dropping (A, B) in our Drop impl.
-    ///
-    /// ```compile_fail
-    /// use twice_cell::TwiceLock;
-    ///
-    /// struct A<'a>(&'a str);
-    ///
-    /// impl<'a> Drop for A<'a> {
-    ///     fn drop(&mut self) {}
-    /// }
-    ///
-    /// let cell = TwiceLock::new(0u8);
-    /// {
-    ///     let s = String::new();
-    ///     let _ = cell.set(A(&s));
-    /// }
-    /// ```
-    _marker: PhantomData<(A, B)>,
 }
 
 impl<A, B> TwiceLock<A, B> {
@@ -543,7 +522,6 @@ impl<A, B> TwiceLock<A, B> {
         TwiceLock {
             once: Once::new(),
             value: UnsafeCell::new(UntaggedEither::new(value)),
-            _marker: PhantomData,
         }
     }
 
@@ -1060,7 +1038,6 @@ impl<A, B> From<B> for TwiceLock<A, B> {
         TwiceLock {
             once,
             value,
-            _marker: PhantomData,
         }
     }
 }
